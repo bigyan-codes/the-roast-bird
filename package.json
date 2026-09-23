@@ -1,0 +1,13 @@
+{
+  "name": "the-roast-bird",
+  "version": "1.0.0",
+  "description": "Flappy Bird where a local LLM roasts every death, on-device via QVAC.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs"
+  },
+  "dependencies": {
+    "@qvac/sdk": "^0.19.0"
+  },
+  "license": "MIT"
+}
