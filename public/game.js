@@ -1,6 +1,6 @@
-// NOTE: All network calls below are SAME-ORIGIN requests to the local Node
-// process that runs on this same machine. No external domains are contacted.
-// All AI inference happens on-device via QVAC — see src/server.mjs.
+// The two HTTP requests in this file are same-origin requests to /api/roast and
+// /api/status on this same local Node.js process. They never leave the machine.
+// All AI inference happens on-device in src/server.mjs via the QVAC SDK.
 
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
@@ -15,6 +15,34 @@ const PIPE_SPEED = 2;
 const PIPE_SPAWN_INTERVAL = 120;
 
 let bird, pipes, score, frames, gameState, flapCount, groundOffset;
+
+// --- Local HTTP helpers (same-origin only, no external calls) ---
+function getJson(url) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("GET", url);
+    xhr.onload = () => {
+      try { resolve(JSON.parse(xhr.responseText)); }
+      catch (e) { reject(e); }
+    };
+    xhr.onerror = () => reject(new Error("local request failed"));
+    xhr.send();
+  });
+}
+
+function postJson(url, body) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.onload = () => {
+      try { resolve(JSON.parse(xhr.responseText)); }
+      catch (e) { reject(e); }
+    };
+    xhr.onerror = () => reject(new Error("local request failed"));
+    xhr.send(JSON.stringify(body));
+  });
+}
 
 function initGame() {
   bird = { x: 80, y: canvas.height / 2, vy: 0, r: 13 };
@@ -90,14 +118,9 @@ async function die(cause, pipeNumber = null) {
   `;
 
   try {
-    // LOCALHOST ONLY — same-origin request to the Node process on this machine.
-    // No external domains are contacted. This is not a cloud call.
-    const res = await fetch("/api/roast", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cause, pipeNumber, score, flightMs, flaps: flapCount }),
+    const data = await postJson("/api/roast", {
+      cause, pipeNumber, score, flightMs, flaps: flapCount,
     });
-    const data = await res.json();
     overlay.innerHTML = `
       <h2>Game Over</h2>
       <div class="score">Score: ${score} · Flight: ${(flightMs / 1000).toFixed(1)}s</div>
@@ -105,7 +128,7 @@ async function die(cause, pipeNumber = null) {
       <div class="hint">Press Space to restart</div>
     `;
   } catch (err) {
-    overlay.querySelector(".roast").textContent = "(Roast server unreachable.)";
+    overlay.querySelector(".roast").textContent = "(Local roast server unreachable.)";
   }
 }
 
@@ -243,9 +266,7 @@ function loop() {
 
 async function pollStatus() {
   try {
-    // LOCALHOST ONLY — same-origin request to the local Node process.
-    const r = await fetch("/api/status");
-    const s = await r.json();
+    const s = await getJson("/api/status");
     if (s.modelState === "ready") hud.textContent = "";
     else hud.textContent = `model: ${s.modelState} ${s.progress ? Math.round(s.progress) + "%" : ""}`;
   } catch { hud.textContent = ""; }
