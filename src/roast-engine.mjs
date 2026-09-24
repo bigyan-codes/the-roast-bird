@@ -42,10 +42,10 @@ const TIER_TONE = {
 
 export function buildRoastPrompt(deathContext, attempt, tier, seed) {
   const recent = session.recentRoasts.length
-    ? `\nDo NOT reuse the phrasing of these recent roasts:\n${session.recentRoasts.map((r) => `- ${r}`).join("\n")}`
+    ? `\nDo NOT reuse the phrasing of these recent roasts:\n${session.recentRoasts.slice(-4).map((r) => `- ${r}`).join("\n")}`
     : "";
 
-  const system = `You write ONE short roast sentence (max 12 words) mocking a Flappy Bird player who just died. Deadpan, mean, funny. No emoji, no quotes, no preamble. Cite exactly ONE of the report numbers, verbatim. Never invent numbers.${recent}`;
+  const system = `You write ONE short roast line for a Flappy Bird player who just died. Deadpan, mean, funny. One sentence. No emoji, no quotes, no labels, no coaching.${recent}`;
 
   const angles = [
     "the low score",
@@ -57,14 +57,15 @@ export function buildRoastPrompt(deathContext, attempt, tier, seed) {
   ];
   const angle = angles[seed % angles.length];
 
-  const user = `Death report:
-score: ${deathContext.score}
-flight: ${(deathContext.flightMs / 1000).toFixed(1)}s
+  const user = `Player stats:
+score: ${deathContext.score} pipes
+flight: ${(deathContext.flightMs / 1000).toFixed(1)} seconds
 flaps: ${deathContext.flaps}
-cause: ${deathContext.cause}${deathContext.pipeNumber ? ` #${deathContext.pipeNumber}` : ""}
+died by: ${deathContext.cause}${deathContext.pipeNumber ? ` #${deathContext.pipeNumber}` : ""}
 
-Focus on: ${angle}. Tone: ${TIER_TONE[tier]}.
-Roast (one sentence, max 12 words, cite ONE number from the report verbatim):`;
+Write ONE roast line (max 14 words). Cite exactly ONE of the numbers above. Focus on: ${angle}. Tone: ${TIER_TONE[tier]}.
+
+Roast:`;
 
   return [
     { role: "system", content: system },

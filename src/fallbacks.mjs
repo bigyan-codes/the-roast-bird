@@ -12,10 +12,32 @@ export const FALLBACK_ROASTS = [
   "Somewhere, a pigeon is embarrassed for you.",
   "The ground was the only thing that wanted you.",
   "That wasn't a flight, that was a short story.",
-  "You flapped so hard the bird forgot how to stay up.",
   "Impressive commitment to the floor.",
+  "The pipes didn't move. You did. Into them.",
+];
+
+export const FALLBACK_TIPS = [
+  "Single flaps beat double flaps in tight gaps.",
+  "Aim for the middle of the gap, not the top edge.",
+  "Flap earlier — the bird falls faster than you think at the top.",
+  "Keep a steady rhythm; panic flapping always ends badly.",
+  "Don't flap into the pipe — flap before it arrives.",
+  "Watch the gap, not the bird. The bird follows your input.",
+  "Two quick taps beat one long hold every time.",
+  "Pre-flap before a close pipe reaches you.",
+  "Stay in the middle third. Don't chase the ceiling.",
+  "The first pipe sets your rhythm — get it clean.",
+  "Stop flapping when you're through. Momentum carries you.",
+  "If you're falling fast, flap once and wait. Don't spam.",
+  "If you're nose-down, you're too late. Flap earlier.",
+  "Every pipe is a fresh decision. Don't reuse the last gap's timing.",
+  "Your biggest issue is timing, not speed. Slow down.",
 ];
 
 export function randomFallback() {
   return FALLBACK_ROASTS[Math.floor(Math.random() * FALLBACK_ROASTS.length)];
+}
+
+export function randomTip() {
+  return FALLBACK_TIPS[Math.floor(Math.random() * FALLBACK_TIPS.length)];
 }

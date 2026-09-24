@@ -16,7 +16,7 @@ import {
   rememberRoast,
   getRecentRoasts,
 } from "./roast-engine.mjs";
-import { randomFallback } from "./fallbacks.mjs";
+import { randomFallback, randomTip } from "./fallbacks.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
@@ -98,48 +98,61 @@ async function extractText(result) {
   return "";
 }
 
-// ---------- Roast validation ----------
+// ---------- Roast parsing + validation (loose but meaningful) ----------
+
 function normalize(s) {
   return s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
 }
 
-function firstN(norm, n = 4) {
-  return norm.split(" ").slice(0, n).join(" ");
+function jaccard(a, b) {
+  const A = new Set(a.split(" "));
+  const B = new Set(b.split(" "));
+  const inter = [...A].filter((w) => B.has(w)).length;
+  const union = new Set([...A, ...B]).size;
+  return union === 0 ? 0 : inter / union;
 }
 
 function isDuplicate(candidate, recent) {
   const c = normalize(candidate);
   if (!c) return true;
-  const cHead = firstN(c, 5);
   for (const r of recent) {
     const rn = normalize(r);
     if (rn === c) return true;
-    // Same opening 5 words → considered a repeat
-    if (firstN(rn, 5) === cHead && cHead.length > 10) return true;
-    // Very high overlap (Jaccard on word sets)
-    const a = new Set(c.split(" "));
-    const b = new Set(rn.split(" "));
-    const inter = [...a].filter((w) => b.has(w)).length;
-    const union = new Set([...a, ...b]).size;
-    if (union > 0 && inter / union > 0.6) return true;
+    if (jaccard(c, rn) > 0.7) return true;
   }
   return false;
 }
 
-function hasNumber(text) {
-  return /\d/.test(text);
+function cleanRoast(s) {
+  let t = String(s || "")
+    .split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || "";
+  t = t.replace(/^\s*(roast|line\s*\d|\d+[.):])\s*[:.\-]?\s*/i, "");
+  t = t.replace(/^["'""'']+|["'""'']+$/g, "");
+  return t.replace(/\s+/g, " ").trim();
 }
 
 function isValidRoast(text, recent) {
   if (!text) return false;
   const words = text.trim().split(/\s+/);
-  if (words.length < 5) return false;
-  if (words.length > 22) return false;
-  if (text.length > 160) return false;
-  if (!hasNumber(text)) return false;           // must cite at least one number
-  if (isDuplicate(text, recent)) return false;   // no repeats
+  if (words.length < 5 || words.length > 18) return false;
+  if (text.length > 140) return false;
+  if (!/\d/.test(text)) return false;
+  if (/[:;]/.test(text)) return false;         // no jammed-on extra clauses
+  if (isDuplicate(text, recent)) return false;
+
+  // Reject garbled unit phrasings like "6 seconds a second"
+  const unitPairs = [["second","seconds"], ["pipe","pipes"], ["flap","flaps"]];
+  const lower = text.toLowerCase();
+  for (const [sing, plur] of unitPairs) {
+    const re = new RegExp("\\b(" + sing + "|" + plur + ")\\b", "g");
+    const count = (lower.match(re) || []).length;
+    if (count > 1) return false;
+  }
+
   return true;
 }
+
+// ---------- Model lifecycle ----------
 
 async function initializeModel() {
   if (modelId) return;
@@ -160,6 +173,8 @@ async function initializeModel() {
     modelState = "unloaded";
   }
 }
+
+// ---------- HTTP ----------
 
 const server = http.createServer(async (req, res) => {
   const url = req.url.split("?")[0];
@@ -193,44 +208,49 @@ const server = http.createServer(async (req, res) => {
     registerDeath(deathContext);
     const attempt = getAttemptNumber();
     const tier = getEscalationTier(deathContext.score, attempt);
-    const recent = getRecentRoasts();
+    const recentRoasts = getRecentRoasts();
+    const tip = randomTip();   // coaching is always curated — always clean
 
+    // Model not ready → both roast and tip from curated
     if (modelState !== "ready" || !modelId) {
+      const roast = randomFallback();
+      rememberRoast(roast);
+      return json(res, 202, { roast, tip, tier, attempt, fallback: true });
+    }
+
+    try {
+      roastSeed++;
+      const history = buildRoastPrompt(deathContext, attempt, tier, roastSeed);
+      const result = await completion({
+        modelId,
+        history,
+        temperature: 0.7,
+        maxTokens: 28,
+      });
+
+      const roast = cleanRoast(await extractText(result));
+
+      if (isValidRoast(roast, recentRoasts)) {
+        rememberRoast(roast);
+        console.log(`[ok t${tier} a${attempt}] roast:ai`);
+        console.log(`  roast: ${roast}`);
+        console.log(`  tip:   ${tip}`);
+        return json(res, 200, { roast, tip, tier, attempt, fallback: false });
+      }
+
+      // Roast failed validation → curated fallback for roast only
       const fb = randomFallback();
       rememberRoast(fb);
-      return json(res, 202, { roast: fb, tier, attempt, fallback: true });
+      console.log(`[ok t${tier} a${attempt}] roast:fb (rejected: "${roast}")`);
+      console.log(`  roast: ${fb}`);
+      console.log(`  tip:   ${tip}`);
+      return json(res, 200, { roast: fb, tip, tier, attempt, fallback: "roast" });
+    } catch (err) {
+      console.error("[roast error]", err.message);
+      const fb = randomFallback();
+      rememberRoast(fb);
+      return json(res, 202, { roast: fb, tip, tier, attempt, fallback: "both" });
     }
-
-    // Try up to 2 model attempts, validate each; fall back if neither passes
-    for (let tries = 0; tries < 2; tries++) {
-      try {
-        roastSeed++;
-        const history = buildRoastPrompt(deathContext, attempt, tier, roastSeed);
-        const result = await completion({
-          modelId,
-          history,
-          temperature: 0.7,
-          maxTokens: 20,
-        });
-        let roast = (await extractText(result)).trim().split("\n")[0];
-        roast = roast.replace(/^["'""'']+|["'""'']+$/g, "").trim();
-
-        if (isValidRoast(roast, recent)) {
-          console.log(`[roast ok] (t${tier} a${attempt}) ${roast}`);
-          rememberRoast(roast);
-          return json(res, 200, { roast, tier, attempt, fallback: false });
-        }
-        console.log(`[roast rejected try ${tries + 1}] ${roast}`);
-      } catch (err) {
-        console.error(`[roast error try ${tries + 1}]`, err.message);
-      }
-    }
-
-    // Both attempts failed validation → canned roast
-    const fb = randomFallback();
-    console.log(`[roast fallback] ${fb}`);
-    rememberRoast(fb);
-    return json(res, 202, { roast: fb, tier, attempt, fallback: true });
   }
 
   res.writeHead(404); res.end("Not found");
