@@ -10,7 +10,7 @@ Every time you die, the game sends the death context (score, survival time, pipe
 
 ## Built with
 
-- **@qvac/sdk v0.19.x** — `loadModel` + `completion` for on-device inference
+- **@qvac/sdk v0.20.0** — `loadModel` + `completion` for on-device inference
 - **Model:** `LLAMA_3_2_1B_INST_Q4_0` (Llama 3.2 1B Instruct, Q4_0 quantized)
 - Vanilla HTML5 canvas + JS (no build step)
 - Node.js >= 22.17
