@@ -1,3 +1,7 @@
+// NOTE: All network calls below are SAME-ORIGIN requests to the local Node
+// process that runs on this same machine. No external domains are contacted.
+// All AI inference happens on-device via QVAC — see src/server.mjs.
+
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 const overlay = document.getElementById("overlay");
@@ -86,6 +90,8 @@ async function die(cause, pipeNumber = null) {
   `;
 
   try {
+    // LOCALHOST ONLY — same-origin request to the Node process on this machine.
+    // No external domains are contacted. This is not a cloud call.
     const res = await fetch("/api/roast", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -103,17 +109,13 @@ async function die(cause, pipeNumber = null) {
   }
 }
 
-// ---------- Drawing ----------
-
 function drawBackground() {
-  // Sky gradient
   const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
   g.addColorStop(0, "#70c5ce");
   g.addColorStop(1, "#a8e6cf");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Distant clouds
   ctx.fillStyle = "rgba(255,255,255,0.55)";
   const clouds = [
     { x: (frames * 0.3) % (canvas.width + 120) - 60, y: 90, s: 26 },
@@ -128,7 +130,6 @@ function drawBackground() {
     ctx.fill();
   }
 
-  // Ground strip
   ctx.fillStyle = "#ded895";
   ctx.fillRect(0, canvas.height - 60, canvas.width, 60);
   ctx.fillStyle = "#c9c26b";
@@ -145,20 +146,16 @@ function drawPipe(p) {
   bodyGrad.addColorStop(0.5, "#8bd17c");
   bodyGrad.addColorStop(1, "#2e7d32");
 
-  // Top pipe body
   ctx.fillStyle = bodyGrad;
   ctx.fillRect(p.x, 0, PIPE_WIDTH, p.y - 22);
-  // Top pipe cap
   ctx.fillRect(p.x - 4, p.y - 22, PIPE_WIDTH + 8, 22);
   ctx.strokeStyle = "#1b5e20";
   ctx.lineWidth = 2;
   ctx.strokeRect(p.x - 4, p.y - 22, PIPE_WIDTH + 8, 22);
 
-  // Bottom pipe body
   const bottomY = p.y + PIPE_GAP;
   ctx.fillStyle = bodyGrad;
   ctx.fillRect(p.x, bottomY + 22, PIPE_WIDTH, canvas.height - bottomY);
-  // Bottom pipe cap
   ctx.fillRect(p.x - 4, bottomY, PIPE_WIDTH + 8, 22);
   ctx.strokeRect(p.x - 4, bottomY, PIPE_WIDTH + 8, 22);
 }
@@ -169,7 +166,6 @@ function drawBird() {
   ctx.translate(bird.x, bird.y);
   ctx.rotate(angle);
 
-  // Body
   ctx.beginPath();
   ctx.ellipse(0, 0, 16, 12, 0, 0, Math.PI * 2);
   ctx.fillStyle = "#ffd166";
@@ -178,13 +174,11 @@ function drawBird() {
   ctx.strokeStyle = "#6b4a00";
   ctx.stroke();
 
-  // Belly (lighter)
   ctx.beginPath();
   ctx.ellipse(-1, 4, 10, 6, 0, 0, Math.PI * 2);
   ctx.fillStyle = "#ffeaa7";
   ctx.fill();
 
-  // Wing — flaps when velocity is negative
   const wingY = bird.vy < 0 ? -4 : 3;
   ctx.beginPath();
   ctx.ellipse(-4, wingY, 7, 4, -0.3, 0, Math.PI * 2);
@@ -194,7 +188,6 @@ function drawBird() {
   ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  // Eye
   ctx.beginPath();
   ctx.arc(6, -3, 3.5, 0, Math.PI * 2);
   ctx.fillStyle = "#fff";
@@ -204,7 +197,6 @@ function drawBird() {
   ctx.fillStyle = "#000";
   ctx.fill();
 
-  // Beak (triangle)
   ctx.beginPath();
   ctx.moveTo(14, 0);
   ctx.lineTo(24, 2);
@@ -220,12 +212,9 @@ function drawBird() {
 
 function draw() {
   drawBackground();
-
   for (const p of pipes) drawPipe(p);
-
   drawBird();
 
-  // Score at top-left
   ctx.save();
   ctx.font = "bold 34px -apple-system, sans-serif";
   ctx.lineWidth = 5;
@@ -235,7 +224,6 @@ function draw() {
   ctx.fillText(String(score), 18, 46);
   ctx.restore();
 
-  // Ready hint
   if (gameState === "ready") {
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(0, canvas.height / 2 - 40, canvas.width, 50);
@@ -255,6 +243,7 @@ function loop() {
 
 async function pollStatus() {
   try {
+    // LOCALHOST ONLY — same-origin request to the local Node process.
     const r = await fetch("/api/status");
     const s = await r.json();
     if (s.modelState === "ready") hud.textContent = "";

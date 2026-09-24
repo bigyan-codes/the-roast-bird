@@ -8,6 +8,14 @@ A Flappy Bird clone where a local LLM roasts you after every death, based on exa
 
 Every time you die, the game sends the death context (score, survival time, pipe number, flap count, attempt number) to a local Node.js server. The server builds a prompt, runs inference through QVAC's `completion` function, and returns a one-line roast that appears on the game-over screen. Roasts escalate in tone as you play. Recent roasts are fed back into the prompt to prevent repeats, and a server-side validation layer swaps in a strong canned roast when the model produces something malformed.
 
+## On-device only — no cloud
+
+All AI inference happens on-device via the QVAC SDK, which runs in the local Node.js process. There are no external network calls, no API keys, and no data leaving the machine.
+
+The browser game makes two same-origin `fetch()` requests to `/api/roast` and `/api/status` — these hit the Node server running on the same machine at `localhost:3000`. They never reach the internet. (QVAC only runs in Node, so the browser must talk to the local Node process this way — but nothing leaves the machine.)
+
+If you want to verify: unplug your network after the model is cached and everything still works.
+
 ## Built with
 
 - **@qvac/sdk v0.20.0** — `loadModel` + `completion` for on-device inference
