@@ -125,6 +125,7 @@ async function die(cause, pipeNumber = null) {
       <h2>Game Over</h2>
       <div class="score">Score: ${score} · Flight: ${(flightMs / 1000).toFixed(1)}s</div>
       <div class="roast">"${data.roast}"</div>
+      <div class="coach">Coach: ${data.tip}</div>
       <div class="hint">Press Space to restart</div>
     `;
   } catch (err) {
