@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 import {
   loadModel,
   completion,
+  textToSpeech,
   unloadModel,
   LLAMA_3_2_1B_INST_Q4_0,
+  TTS_EN_SUPERTONIC_Q4_0,
 } from "@qvac/sdk";
 import {
   registerDeath,
@@ -22,9 +24,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 const PORT = 3000;
 
-let modelId = null;
-let modelState = "unloaded";
-let modelProgress = 0;
+let llmId = null;
+let ttsId = null;
+let llmState = "unloaded";
+let ttsState = "unloaded";
+let llmProgress = 0;
+let ttsProgress = 0;
 let roastSeed = 0;
 
 const MIME = {
@@ -70,14 +75,12 @@ function chunkToString(chunk) {
 async function extractText(result) {
   if (result == null) return "";
   if (typeof result === "string") return result;
-
   const candidates = ["text", "final", "content", "output", "response", "message", "choices", "delta"];
   for (const key of candidates) {
     let v = result[key];
     if (v == null) continue;
     v = await resolveMaybe(v);
     if (typeof v === "string") return v;
-
     if (v && typeof v[Symbol.asyncIterator] === "function") {
       let out = "";
       for await (const chunk of v) out += chunkToString(await resolveMaybe(chunk));
@@ -98,12 +101,9 @@ async function extractText(result) {
   return "";
 }
 
-// ---------- Roast parsing + validation (loose but meaningful) ----------
-
 function normalize(s) {
   return s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
 }
-
 function jaccard(a, b) {
   const A = new Set(a.split(" "));
   const B = new Set(b.split(" "));
@@ -111,7 +111,6 @@ function jaccard(a, b) {
   const union = new Set([...A, ...B]).size;
   return union === 0 ? 0 : inter / union;
 }
-
 function isDuplicate(candidate, recent) {
   const c = normalize(candidate);
   if (!c) return true;
@@ -122,59 +121,106 @@ function isDuplicate(candidate, recent) {
   }
   return false;
 }
-
 function cleanRoast(s) {
-  let t = String(s || "")
-    .split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || "";
+  let t = String(s || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0] || "";
   t = t.replace(/^\s*(roast|line\s*\d|\d+[.):])\s*[:.\-]?\s*/i, "");
   t = t.replace(/^["'""'']+|["'""'']+$/g, "");
   return t.replace(/\s+/g, " ").trim();
 }
-
 function isValidRoast(text, recent) {
   if (!text) return false;
   const words = text.trim().split(/\s+/);
   if (words.length < 5 || words.length > 18) return false;
   if (text.length > 140) return false;
   if (!/\d/.test(text)) return false;
-  if (/[:;]/.test(text)) return false;         // no jammed-on extra clauses
+  if (/[:;]/.test(text)) return false;
   if (isDuplicate(text, recent)) return false;
-
-  // Reject garbled unit phrasings like "6 seconds a second"
   const unitPairs = [["second","seconds"], ["pipe","pipes"], ["flap","flaps"]];
   const lower = text.toLowerCase();
   for (const [sing, plur] of unitPairs) {
     const re = new RegExp("\\b(" + sing + "|" + plur + ")\\b", "g");
-    const count = (lower.match(re) || []).length;
-    if (count > 1) return false;
+    if ((lower.match(re) || []).length > 1) return false;
   }
-
   return true;
 }
 
-// ---------- Model lifecycle ----------
+// PCM (mono, 16-bit) -> WAV buffer
+function pcmToWav(pcm, rate) {
+  const n = pcm.length;
+  const buf = Buffer.alloc(44 + n * 2);
+  buf.write("RIFF", 0);
+  buf.writeUInt32LE(36 + n * 2, 4);
+  buf.write("WAVE", 8);
+  buf.write("fmt ", 12);
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(rate, 24);
+  buf.writeUInt32LE(rate * 2, 28);
+  buf.writeUInt16LE(2, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write("data", 36);
+  buf.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) buf.writeInt16LE(pcm[i], 44 + i * 2);
+  return buf;
+}
 
-async function initializeModel() {
-  if (modelId) return;
-  modelState = "downloading";
-  console.log("[qvac] Loading model...");
+async function synthesizeSpeech(text) {
+  if (!ttsId) return null;
   try {
-    modelId = await loadModel({
-      modelSrc: LLAMA_3_2_1B_INST_Q4_0,
-      onProgress: (p) => {
-        modelProgress = p.percentage ?? 0;
-        modelState = p.percentage < 100 ? "downloading" : "loading";
-      },
+    const result = await textToSpeech({
+      modelId: ttsId,
+      text,
+      stream: false,
     });
-    modelState = "ready";
-    console.log("[qvac] Model ready.");
+    const samples = await result.buffer;
+    if (!Array.isArray(samples) || samples.length === 0) return null;
+    return pcmToWav(samples, 44100).toString("base64");
   } catch (err) {
-    console.error("[qvac] Model failed to load:", err);
-    modelState = "unloaded";
+    console.error("[tts] synth error:", err.message);
+    return null;
   }
 }
 
-// ---------- HTTP ----------
+async function initializeModels() {
+  // LLM first
+  llmState = "downloading";
+  console.log("[qvac] Loading LLM...");
+  try {
+    llmId = await loadModel({
+      modelSrc: LLAMA_3_2_1B_INST_Q4_0,
+      onProgress: (p) => {
+        llmProgress = p.percentage ?? 0;
+        llmState = p.percentage < 100 ? "downloading" : "loading";
+      },
+    });
+    llmState = "ready";
+    console.log("[qvac] LLM ready.");
+  } catch (err) {
+    console.error("[qvac] LLM failed:", err);
+    llmState = "unloaded";
+  }
+
+  // TTS second
+  ttsState = "downloading";
+  console.log("[qvac] Loading TTS...");
+  try {
+    ttsId = await loadModel({
+      modelSrc: TTS_EN_SUPERTONIC_Q4_0,
+      modelType: "tts-ggml",
+      modelConfig: { ttsEngine: "supertonic", language: "en", voice: "F1" },
+      onProgress: (p) => {
+        ttsProgress = p.percentage ?? 0;
+        ttsState = p.percentage < 100 ? "downloading" : "loading";
+      },
+    });
+    ttsState = "ready";
+    console.log("[qvac] TTS ready.");
+  } catch (err) {
+    console.error("[qvac] TTS failed:", err);
+    ttsState = "unloaded";
+  }
+}
 
 const server = http.createServer(async (req, res) => {
   const url = req.url.split("?")[0];
@@ -194,7 +240,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && url === "/api/status") {
-    return json(res, 200, { modelState, progress: modelProgress });
+    return json(res, 200, {
+      modelState: llmState,
+      progress: llmProgress,
+      ttsState,
+      ttsProgress,
+    });
   }
 
   if (req.method === "POST" && url === "/api/roast") {
@@ -209,48 +260,55 @@ const server = http.createServer(async (req, res) => {
     const attempt = getAttemptNumber();
     const tier = getEscalationTier(deathContext.score, attempt);
     const recentRoasts = getRecentRoasts();
-    const tip = randomTip();   // coaching is always curated — always clean
+    const tip = randomTip();
 
-    // Model not ready → both roast and tip from curated
-    if (modelState !== "ready" || !modelId) {
+    // Fallback path when LLM isn't ready
+    if (llmState !== "ready" || !llmId) {
       const roast = randomFallback();
       rememberRoast(roast);
-      return json(res, 202, { roast, tip, tier, attempt, fallback: true });
+      const audio = await synthesizeSpeech(roast);
+      return json(res, 202, { roast, tip, audio, tier, attempt, fallback: true });
     }
 
+    // Generate the roast text
+    let roast;
+    let fromAI = false;
     try {
       roastSeed++;
       const history = buildRoastPrompt(deathContext, attempt, tier, roastSeed);
       const result = await completion({
-        modelId,
+        modelId: llmId,
         history,
         temperature: 0.7,
         maxTokens: 28,
       });
-
-      const roast = cleanRoast(await extractText(result));
-
-      if (isValidRoast(roast, recentRoasts)) {
-        rememberRoast(roast);
-        console.log(`[ok t${tier} a${attempt}] roast:ai`);
-        console.log(`  roast: ${roast}`);
-        console.log(`  tip:   ${tip}`);
-        return json(res, 200, { roast, tip, tier, attempt, fallback: false });
+      const candidate = cleanRoast(await extractText(result));
+      if (isValidRoast(candidate, recentRoasts)) {
+        roast = candidate;
+        fromAI = true;
+      } else {
+        console.log(`[roast rejected] "${candidate}"`);
+        roast = randomFallback();
       }
-
-      // Roast failed validation → curated fallback for roast only
-      const fb = randomFallback();
-      rememberRoast(fb);
-      console.log(`[ok t${tier} a${attempt}] roast:fb (rejected: "${roast}")`);
-      console.log(`  roast: ${fb}`);
-      console.log(`  tip:   ${tip}`);
-      return json(res, 200, { roast: fb, tip, tier, attempt, fallback: "roast" });
     } catch (err) {
       console.error("[roast error]", err.message);
-      const fb = randomFallback();
-      rememberRoast(fb);
-      return json(res, 202, { roast: fb, tip, tier, attempt, fallback: "both" });
+      roast = randomFallback();
     }
+
+    rememberRoast(roast);
+
+    // Synthesize the roast to audio
+    const audio = await synthesizeSpeech(roast);
+
+    console.log(`[roast t${tier} a${attempt}] ${fromAI ? "ai" : "fb"} | audio: ${audio ? "yes" : "no"}`);
+    console.log(`  roast: ${roast}`);
+    console.log(`  tip:   ${tip}`);
+
+    return json(res, 200, {
+      roast, tip, audio,
+      tier, attempt,
+      fallback: fromAI ? false : "roast",
+    });
   }
 
   res.writeHead(404); res.end("Not found");
@@ -258,11 +316,12 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`\n🦅  The Roast Bird → http://localhost:${PORT}\n`);
-  initializeModel();
+  initializeModels();
 });
 
 process.on("SIGINT", async () => {
-  console.log("\n[shutdown] unloading model...");
-  if (modelId) { try { await unloadModel({ modelId }); } catch {} }
+  console.log("\n[shutdown] unloading models...");
+  if (llmId) { try { await unloadModel({ modelId: llmId }); } catch {} }
+  if (ttsId) { try { await unloadModel({ modelId: ttsId }); } catch {} }
   process.exit(0);
 });

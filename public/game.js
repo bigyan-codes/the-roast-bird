@@ -105,6 +105,28 @@ function update() {
   }
 }
 
+function playWavBase64(b64) {
+  try {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const blob = new Blob([bytes], { type: "audio/wav" });
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.volume = 1.0;
+    audio.playbackRate = 1.15;         // quicker, more impatient
+    if ("preservesPitch" in audio) {
+      audio.preservesPitch = false;    // pitch rises with speed = awkward/snarky
+    }
+    audio.play().catch((e) => {
+      // Some browsers block autoplay until a user gesture. The game already
+      // requires Space/click to play, so this should be fine — but log anyway.
+      console.log("[audio] play blocked:", e.message);
+    });
+    audio.onended = () => URL.revokeObjectURL(url);
+  } catch (e) {
+    console.log("[audio] decode error:", e.message);
+  }
+}
+
 async function die(cause, pipeNumber = null) {
   gameState = "over";
   const flightMs = Math.floor((frames / 60) * 1000);
@@ -128,6 +150,7 @@ async function die(cause, pipeNumber = null) {
       <div class="coach">Coach: ${data.tip}</div>
       <div class="hint">Press Space to restart</div>
     `;
+    if (data.audio) playWavBase64(data.audio);
   } catch (err) {
     overlay.querySelector(".roast").textContent = "(Local roast server unreachable.)";
   }
