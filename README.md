@@ -1,6 +1,6 @@
 # 🦅 The Roast Bird
 
-A Flappy Bird clone where a local LLM roasts you after every death, based on exactly how you died. All inference runs on-device via the [QVAC SDK](https://github.com/tetherto/qvac) — no API keys, no cloud, no data leaving your machine.
+A Flappy Bird clone where a local LLM roasts you, coaches you, and **speaks the roast out loud** after every death — based on exactly how you died. All inference runs on-device via the [QVAC SDK](https://github.com/tetherto/qvac). No API keys, no cloud, no data leaving your machine.
 
 > *"Three pipes and a 4-second run. Impressive, in the wrong direction."*
 
@@ -18,8 +18,9 @@ Roasts escalate in tone as you play — deadpan mockery at first, then grudging 
 
 ## Built with
 
-- **@qvac/sdk v0.20.0** — `loadModel` + `completion` for on-device inference
-- **Model:** `LLAMA_3_2_1B_INST_Q4_0` (Llama 3.2 1B Instruct, Q4_0 quantized)
+- **@qvac/sdk v0.20.0** — `loadModel`, `completion`, and `textToSpeech`
+- **LLM:** `LLAMA_3_2_1B_INST_Q4_0` (Llama 3.2 1B Instruct, Q4_0 quantized)
+- **TTS:** `TTS_EN_SUPERTONIC_Q4_0` (Supertonic English, voice F1)
 - Vanilla HTML5 canvas + JS (no build step)
 - Node.js >= 22.17
 
@@ -27,7 +28,7 @@ Roasts escalate in tone as you play — deadpan mockery at first, then grudging 
 
 - **Node.js >= 22.17** and **npm >= 10.9**
 - **4 GB+ RAM** recommended
-- **~1 GB free disk** for the model (cached in ~/.qvac/models/ after first run)
+- **~1.1 GB free disk** for models (LLM ~1 GB + TTS ~80 MB), cached in `~/.qvac/models/` after first run
 - **Windows users:** Vulkan >= 1.4 is required even for CPU-only inference
 
 ## Install
@@ -42,20 +43,24 @@ Roasts escalate in tone as you play — deadpan mockery at first, then grudging 
 
 Then open **http://localhost:3000** in your browser.
 
-- **First run:** the model downloads (~1 GB) — you'll see progress in the top-right HUD. The game is playable during the download using canned fallback roasts.
-- **Subsequent runs:** the model loads from cache in ~1 second.
+- **First run:** models download (~1.1 GB total) — progress shown in the top-right HUD. The game is playable during the download using canned fallback roasts.
+- **Subsequent runs:** models load from cache in ~1–2 seconds.
 - **Controls:** Space / click / tap to flap.
+- **Sound:** turn your volume up — the bird speaks the roast after each death.
 
 ## Architecture
 
     Browser (canvas game)  --POST /api/roast-->  Node server (localhost)
                                                  |- session memory (in-RAM)
                                                  |- escalation + prompt builder
-                                                 |- roast validation
-                                                 |- QVAC SDK (on-device inference)
+                                                 |- roast validation (rejects repeats/garbage)
+                                                 |- QVAC SDK (on-device)
+                                                    |- loadModel
+                                                    |- completion     -> roast text
+                                                    \- textToSpeech   -> spoken audio
 
 - `GET /api/status` -> model download/load progress
-- `POST /api/roast` -> death context in, roast out
+- `POST /api/roast` -> death context in, roast + tip + base64 WAV audio out
 
 ## License
 
