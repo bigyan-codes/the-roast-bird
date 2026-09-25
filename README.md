@@ -8,12 +8,13 @@ A Flappy Bird clone where a local LLM roasts you after every death, based on exa
 
 ## What it does
 
-Every time you die, the game sends the death context (score, survival time, pipe number, flap count, attempt number) to a local Node.js server. The server runs inference through QVAC's `completion` function to generate a **roast**, and pairs it with a **coaching tip**.
+Every time you die, the game sends the death context (score, survival time, pipe number, flap count, attempt number) to a local Node.js server. The server runs three on-device AI operations in sequence:
 
-- **Roast:** AI-generated, one short sentence, must cite a real stat from the death report. A server-side validator rejects roasts that garble units, repeat recent ones, or run too long — in which case a curated fallback is used instead.
-- **Tip:** always curated. The 1B model is good at roasting, bad at coaching, so tips come from a hand-written set that stays useful and clean every time.
+1. **Roast** — QVAC's `completion` function runs Llama 3.2 1B to generate a short, deadpan roast that cites a real stat from the death report.
+2. **Coach** — a curated coaching tip is paired with the roast. The 1B model is good at roasting, bad at coaching, so tips come from a hand-written set that stays useful and clean.
+3. **Speak** — QVAC's `textToSpeech` function runs Supertonic TTS to speak the roast out loud through the browser.
 
-Roasts escalate in tone as you play — deadpan mockery at first, then grudging respect at higher scores.
+Roasts escalate in tone as you play — deadpan mockery at first, then grudging respect at higher scores. A server-side validation layer rejects roasts that garble units, repeat recent ones, or run too long, substituting a curated fallback so the game never shows broken output.
 
 ## Built with
 
